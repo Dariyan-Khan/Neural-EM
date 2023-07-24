@@ -10,9 +10,10 @@ import time
 import utils
 import threading
 import numpy as np
-import tensorflow as tf
 
-from tensorflow.contrib import distributions as dist
+import torch
+import torch.distributions as dist
+
 from sacred import Experiment
 from sacred.utils import get_by_dotted_path
 from datasets import ds
@@ -67,29 +68,29 @@ def add_noise(data, noise, dataset):
     if noise_type == 'data':
         noise_type = 'bitflip' if dataset['binary'] else 'masked_uniform'
 
-    with tf.name_scope('input_noise'):
-        shape = tf.stack([s.value if s.value is not None else tf.shape(data)[i]
-                         for i, s in enumerate(data.get_shape())])
 
-        if noise_type == 'bitflip':
-            noise_dist = dist.Bernoulli(probs=noise['prob'], dtype=data.dtype)
-            n = noise_dist.sample(shape)
-            corrupted = data + n - 2 * data * n  # hacky way of implementing (data XOR n)
-        elif noise_type == 'masked_uniform':
-            noise_dist = dist.Uniform(low=0., high=1.)
-            noise_uniform = noise_dist.sample(shape)
+    shape = torch.tensor([s.item() if s.item() is not None else data.shape[i]
+                        for i, s in enumerate(data.shape)])
 
-            # sample mask
-            mask_dist = dist.Bernoulli(probs=noise['prob'], dtype=data.dtype)
-            mask = mask_dist.sample(shape)
+    if noise_type == 'bitflip':
+        noise_dist = dist.Bernoulli(probs=noise['prob'], dtype=data.dtype)
+        n = noise_dist.sample(shape)
+        corrupted = data + n - 2 * data * n  # hacky way of implementing (data XOR n)
+    elif noise_type == 'masked_uniform':
+        noise_dist = dist.Uniform(low=0., high=1.)
+        noise_uniform = noise_dist.sample(shape)
 
-            # produce output
-            corrupted = mask * noise_uniform + (1 - mask) * data
-        else:
-            raise KeyError('Unknown noise_type "{}"'.format(noise_type))
+        # sample mask
+        mask_dist = dist.Bernoulli(probs=noise['prob'], dtype=data.dtype)
+        mask = mask_dist.sample(shape)
 
-        corrupted.set_shape(data.get_shape())
-        return corrupted
+        # produce output
+        corrupted = mask * noise_uniform + (1 - mask) * data
+    else:
+        raise KeyError('Unknown noise_type "{}"'.format(noise_type))
+
+    corrupted.set_shape(data.get_shape())
+    return corrupted
 
 
 @ex.capture(prefix='training')
